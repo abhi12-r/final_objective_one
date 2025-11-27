@@ -1,199 +1,293 @@
-<script>
-    function toggleShapeFields() {
-        let shape = document.getElementById("shape").value;
-        document.getElementById("rectangular_fields").style.display =
-            (shape === "rectangular") ? "block" : "none";
-        document.getElementById("circular_fields").style.display =
-            (shape === "circular") ? "block" : "none";
-    }
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Sludge Emptying Time Calculator</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-    let map;
-    let markersLayer;
-    let points = [];  // all points from backend
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
 
-    // ----- PASSKEY -----
-    function showPasskeyPrompt() {
-        const key = prompt("Enter pass key to view OSS health data:");
-        if (key === "1234") {
-            document.getElementById("oss-section").style.display = "block";
-            document.getElementById("oss-link").style.display = "none";
-
-            setTimeout(function () {
-                map.invalidateSize();
-                loadEntries();  // show existing points once map is visible
-            }, 200);
-        } else if (key !== null) {
-            alert("Incorrect pass key.");
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        input, select { margin-bottom: 10px; padding: 5px; width: 300px; max-width: 100%; }
+        button { padding: 8px 16px; }
+        #result { margin-top: 20px; font-weight: bold; }
+        #map { height: 400px; margin-top: 10px; border: 1px solid #ccc; }
+        .legend {
+            background: white;
+            padding: 6px 8px;
+            font-size: 12px;
+            line-height: 18px;
         }
-    }
+        .legend span {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            margin-right: 4px;
+        }
+    </style>
+</head>
+<body>
+    <!-- PASSKEY LINK -->
+    <p id="oss-link">
+        <a href="#" onclick="showPasskeyPrompt(); return false;">
+            Click here to see the OSS health data
+        </a>
+    </p>
 
-    // ----- MAP INIT -----
-    function initMap() {
-        map = L.map('map').setView([20.5937, 78.9629], 5);
+    <h2>Sludge Emptying Time Calculator</h2>
 
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-            maxZoom: 19,
-            attribution: '&copy; OpenStreetMap &copy; CARTO'
-        }).addTo(map);
+    <label>Last emptying date: </label>
+    <input type="date" id="last_date"><br>
 
-        markersLayer = L.layerGroup().addTo(map);
+    <label>No. of people using pit (P): </label>
+    <input type="number" id="P" step="0.01"><br>
 
-        const legend = L.control({position: 'bottomright'});
-        legend.onAdd = function () {
-            const div = L.DomUtil.create('div', 'legend');
-            div.innerHTML = `
-                <b>Legend</b><br>
-                <span style="background:green;"></span> Healthy<br>
-                <span style="background:orange;"></span> Warning<br>
-                <span style="background:red;"></span> Unhealthy
-            `;
-            return div;
-        };
-        legend.addTo(map);
-    }
+    <label>q (sewage flow per person per day, L): </label>
+    <input type="number" id="q" step="0.01"><br>
 
-    function getColor(status) {
-        if (status === "healthy") return "green";
-        if (status === "warning") return "orange";
-        return "red";
-    }
+    <label>F (digestion factor): </label>
+    <input type="number" id="F" step="0.01"><br>
 
-    function createCircleMarker(lat, lon, status, popupText) {
-        return L.circleMarker([lat, lon], {
-            radius: 8,
-            color: getColor(status),
-            fillColor: getColor(status),
-            fillOpacity: 0.8
-        }).bindPopup(popupText);
-    }
+    <label>S (sludge accumulation rate, L/person/year): </label>
+    <input type="number" id="S" step="0.01"><br>
 
-    // ----- DENSITY -----
-    function updateDensity() {
-        const n = points.length;
-        const densityDiv = document.getElementById("density");
+    <label>Shape: </label>
+    <select id="shape" onchange="toggleShapeFields()">
+        <option value="rectangular">Rectangular</option>
+        <option value="circular">Circular</option>
+    </select><br>
 
-        if (n < 2) {
-            densityDiv.textContent = "OSS density: need at least 2 points to estimate.";
-            return;
+    <div id="rectangular_fields">
+        <label>Length (m): </label>
+        <input type="number" id="length" step="0.01"><br>
+        <label>Width (m): </label>
+        <input type="number" id="width" step="0.01"><br>
+        <label>Depth (m): </label>
+        <input type="number" id="depth" step="0.01"><br>
+    </div>
+
+    <div id="circular_fields" style="display:none;">
+        <label>Diameter (m): </label>
+        <input type="number" id="diameter" step="0.01"><br>
+        <label>Depth (m): </label>
+        <input type="number" id="circular_depth" step="0.01"><br>
+    </div>
+
+    <hr>
+
+    <h3>Location (for map)</h3>
+    <label>Latitude: </label>
+    <input type="number" id="lat" step="0.000001"><br>
+
+    <label>Longitude: </label>
+    <input type="number" id="lon" step="0.000001"><br>
+
+    <button onclick="calculate()">Solve</button>
+
+    <div id="result"></div>
+
+    <!-- OSS MAP + DENSITY SECTION (HIDDEN UNTIL PASSKEY) -->
+    <div id="oss-section" style="display:none; margin-top:25px;">
+        <h3>Septic Tank Health Map</h3>
+        <div id="map"></div>
+        <div id="density" style="margin-top:10px; font-weight:bold;"></div>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+    <script>
+        function toggleShapeFields() {
+            let shape = document.getElementById("shape").value;
+            document.getElementById("rectangular_fields").style.display =
+                (shape === "rectangular") ? "block" : "none";
+            document.getElementById("circular_fields").style.display =
+                (shape === "circular") ? "block" : "none";
         }
 
-        let latMin = Infinity, latMax = -Infinity;
-        let lonMin = Infinity, lonMax = -Infinity;
+        let map;
+        let markersLayer;
+        let points = [];
 
-        points.forEach(p => {
-            if (p.lat < latMin) latMin = p.lat;
-            if (p.lat > latMax) latMax = p.lat;
-            if (p.lon < lonMin) lonMin = p.lon;
-            if (p.lon > lonMax) lonMax = p.lon;
-        });
+        function showPasskeyPrompt() {
+            const key = prompt("Enter pass key to view OSS health data:");
+            if (key === "1234") {
+                document.getElementById("oss-section").style.display = "block";
+                document.getElementById("oss-link").style.display = "none";
 
-        const R = 6371000;
-        const toRad = Math.PI / 180;
+                setTimeout(function () {
+                    map.invalidateSize();
+                    loadEntries();
+                }, 200);
+            } else if (key !== null) {
+                alert("Incorrect pass key.");
+            }
+        }
 
-        const latCenter = (latMin + latMax) / 2 * toRad;
-        const dLat = (latMax - latMin) * toRad;
-        const dLon = (lonMax - lonMin) * toRad;
+        function initMap() {
+            map = L.map('map').setView([20.5937, 78.9629], 5);
 
-        const height = dLat * R;
-        const width = dLon * R * Math.cos(latCenter);
-        const area_m2 = Math.max(height * width, 1);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+                maxZoom: 19,
+                attribution: '&copy; OpenStreetMap &copy; CARTO'
+            }).addTo(map);
 
-        const densityPerM2 = n / area_m2;
-        const densityPerKm2 = densityPerM2 * 1e6;
+            markersLayer = L.layerGroup().addTo(map);
 
-        densityDiv.textContent =
-            `Approx. OSS density: ${densityPerM2.toExponential(3)} points/m² (≈ ${densityPerKm2.toFixed(1)} points/km², based on bounding area)`;
-    }
+            const legend = L.control({position: 'bottomright'});
+            legend.onAdd = function () {
+                const div = L.DomUtil.create('div', 'legend');
+                div.innerHTML = `
+                    <b>Legend</b><br>
+                    <span style="background:green;"></span> Healthy<br>
+                    <span style="background:orange;"></span> Warning<br>
+                    <span style="background:red;"></span> Unhealthy
+                `;
+                return div;
+            };
+            legend.addTo(map);
+        }
 
-    // ----- LOAD ALL ENTRIES FROM BACKEND -----
-    async function loadEntries() {
-        try {
-            let res = await fetch("/api/entries");
-            let data = await res.json();
+        function getColor(status) {
+            if (status === "healthy") return "green";
+            if (status === "warning") return "orange";
+            return "red";
+        }
 
-            markersLayer.clearLayers();
-            points = [];
+        function createCircleMarker(lat, lon, status, popupText) {
+            return L.circleMarker([lat, lon], {
+                radius: 8,
+                color: getColor(status),
+                fillColor: getColor(status),
+                fillOpacity: 0.8
+            }).bindPopup(popupText);
+        }
 
-            data.forEach(entry => {
-                if (entry.lat !== null && entry.lon !== null) {
-                    points.push({ lat: entry.lat, lon: entry.lon });
+        function updateDensity() {
+            const n = points.length;
+            const densityDiv = document.getElementById("density");
 
-                    let popup = `
-                        Status: <b>${entry.status.toUpperCase()}</b><br>
-                        Next emptying: ${entry.next_emptying_date}<br>
-                        N (years): ${entry.N_years}<br>
-                        P: ${entry.P}
-                    `;
-                    const m = createCircleMarker(entry.lat, entry.lon, entry.status, popup);
-                    markersLayer.addLayer(m);
-                }
-            });
-
-            // If there are points, zoom to their bounds
-            if (points.length > 0) {
-                const latLngs = points.map(p => [p.lat, p.lon]);
-                map.fitBounds(latLngs);
+            if (n < 2) {
+                densityDiv.textContent = "OSS density: need at least 2 points to estimate.";
+                return;
             }
 
-            updateDensity();
-        } catch (e) {
-            console.error("Error loading entries", e);
-        }
-    }
+            let latMin = Infinity, latMax = -Infinity;
+            let lonMin = Infinity, lonMax = -Infinity;
 
-    // ----- MAIN CALCULATION -----
-    async function calculate() {
-        let shape = document.getElementById("shape").value;
-        let payload = {
-            last_date: document.getElementById("last_date").value,
-            P: document.getElementById("P").value,
-            q: document.getElementById("q").value,
-            F: document.getElementById("F").value,
-            S: document.getElementById("S").value,
-            shape: shape,
-            lat: document.getElementById("lat").value,
-            lon: document.getElementById("lon").value
-        };
+            points.forEach(p => {
+                if (p.lat < latMin) latMin = p.lat;
+                if (p.lat > latMax) latMax = p.lat;
+                if (p.lon < lonMin) lonMin = p.lon;
+                if (p.lon > lonMax) lonMax = p.lon;
+            });
 
-        if (shape === "rectangular") {
-            payload.length = document.getElementById("length").value;
-            payload.width = document.getElementById("width").value;
-            payload.depth = document.getElementById("depth").value;
-        } else {
-            payload.diameter = document.getElementById("diameter").value;
-            payload.depth = document.getElementById("circular_depth").value;
-        }
+            const R = 6371000;
+            const toRad = Math.PI / 180;
 
-        let response = await fetch("/calculate", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload)
-        });
+            const latCenter = (latMin + latMax) / 2 * toRad;
+            const dLat = (latMax - latMin) * toRad;
+            const dLon = (lonMax - lonMin) * toRad;
 
-        let result = await response.json();
-        if (result.error) {
-            document.getElementById("result").innerHTML =
-                `<span style="color:red;">Error: ${result.error}</span>`;
-            return;
+            const height = dLat * R;
+            const width = dLon * R * Math.cos(latCenter);
+            const area_m2 = Math.max(height * width, 1);
+
+            const densityPerM2 = n / area_m2;
+            const densityPerKm2 = densityPerM2 * 1e6;
+
+            densityDiv.textContent =
+                `Approx. OSS density: ${densityPerM2.toExponential(3)} points/m² (≈ ${densityPerKm2.toFixed(1)} points/km², based on bounding area)`;
         }
 
-        document.getElementById("result").innerHTML = `
-            Volume of pit: ${result.volume_litres} L<br>
-            Target volume (2/3 full): ${result.target_volume} L<br>
-            A (Liquid retention): ${result.A} L<br>
-            B (Sludge & scum storage): ${result.B} L<br>
-            Check (A + B): ${result.check_sum} L<br>
-            N (years until 2/3 full): ${result.N_years} years<br>
-            Next emptying date: ${result.next_emptying_date}<br>
-            Health status: <b>${result.status.toUpperCase()}</b>
-        `;
+        async function loadEntries() {
+            try {
+                let res = await fetch("/api/entries");
+                let data = await res.json();
 
-        // Refresh markers & density from backend data
-        if (document.getElementById("oss-section").style.display !== "none") {
-            loadEntries();
+                markersLayer.clearLayers();
+                points = [];
+
+                data.forEach(entry => {
+                    if (entry.lat !== null && entry.lon !== null) {
+                        points.push({ lat: entry.lat, lon: entry.lon });
+
+                        let popup = `
+                            Status: <b>${entry.status.toUpperCase()}</b><br>
+                            Next emptying: ${entry.next_emptying_date}<br>
+                            N (years): ${entry.N_years}<br>
+                            P: ${entry.P}
+                        `;
+                        const m = createCircleMarker(entry.lat, entry.lon, entry.status, popup);
+                        markersLayer.addLayer(m);
+                    }
+                });
+
+                if (points.length > 0) {
+                    const latLngs = points.map(p => [p.lat, p.lon]);
+                    map.fitBounds(latLngs);
+                }
+
+                updateDensity();
+            } catch (e) {
+                console.error("Error loading entries", e);
+            }
         }
-    }
 
-    // Init map as soon as page loads
-    initMap();
-</script>
+        async function calculate() {
+            let shape = document.getElementById("shape").value;
+            let payload = {
+                last_date: document.getElementById("last_date").value,
+                P: document.getElementById("P").value,
+                q: document.getElementById("q").value,
+                F: document.getElementById("F").value,
+                S: document.getElementById("S").value,
+                shape: shape,
+                lat: document.getElementById("lat").value,
+                lon: document.getElementById("lon").value
+            };
+
+            if (shape === "rectangular") {
+                payload.length = document.getElementById("length").value;
+                payload.width = document.getElementById("width").value;
+                payload.depth = document.getElementById("depth").value;
+            } else {
+                payload.diameter = document.getElementById("diameter").value;
+                payload.depth = document.getElementById("circular_depth").value;
+            }
+
+            let response = await fetch("/calculate", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+
+            let result = await response.json();
+            if (result.error) {
+                document.getElementById("result").innerHTML =
+                    `<span style="color:red;">Error: ${result.error}</span>`;
+                return;
+            }
+
+            document.getElementById("result").innerHTML = `
+                Volume of pit: ${result.volume_litres} L<br>
+                Target volume (2/3 full): ${result.target_volume} L<br>
+                A (Liquid retention): ${result.A} L<br>
+                B (Sludge & scum storage): ${result.B} L<br>
+                Check (A + B): ${result.check_sum} L<br>
+                N (years until 2/3 full): ${result.N_years} years<br>
+                Next emptying date: ${result.next_emptying_date}<br>
+                Health status: <b>${result.status.toUpperCase()}</b>
+            `;
+
+            if (document.getElementById("oss-section").style.display !== "none") {
+                loadEntries();
+            }
+        }
+
+        // Init map immediately
+        initMap();
+    </script>
+</body>
+</html>
