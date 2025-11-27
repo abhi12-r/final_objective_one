@@ -37,6 +37,9 @@
 
     <h2>Sludge Emptying Time Calculator</h2>
 
+    <label>Point name (optional): </label>
+    <input type="text" id="name"><br>
+
     <label>Last emptying date: </label>
     <input type="date" id="last_date"><br>
 
@@ -86,6 +89,18 @@
     <button onclick="calculate()">Solve</button>
 
     <div id="result"></div>
+
+    <hr>
+
+    <h3>Bulk upload OSS data (CSV)</h3>
+    <p style="max-width:650px;">
+        Upload a CSV with header:<br>
+        <code>name,last_date,shape,P,q,F,S,length,width,depth,diameter,lat,lon</code><br>
+        Dates must be in <code>YYYY-MM-DD</code> format.
+    </p>
+    <input type="file" id="csvFile" accept=".csv">
+    <button type="button" onclick="uploadCsv()">Upload CSV</button>
+    <div id="uploadResult" style="margin-top:10px;"></div>
 
     <!-- OSS MAP + DENSITY SECTION (HIDDEN UNTIL PASSKEY) -->
     <div id="oss-section" style="display:none; margin-top:25px;">
@@ -213,7 +228,9 @@
                     if (entry.lat !== null && entry.lon !== null) {
                         points.push({ lat: entry.lat, lon: entry.lon });
 
+                        let namePart = entry.name ? `Name: <b>${entry.name}</b><br>` : "";
                         let popup = `
+                            ${namePart}
                             Status: <b>${entry.status.toUpperCase()}</b><br>
                             Next emptying: ${entry.next_emptying_date}<br>
                             N (years): ${entry.N_years}<br>
@@ -238,6 +255,7 @@
         async function calculate() {
             let shape = document.getElementById("shape").value;
             let payload = {
+                name: document.getElementById("name").value,
                 last_date: document.getElementById("last_date").value,
                 P: document.getElementById("P").value,
                 q: document.getElementById("q").value,
@@ -286,7 +304,51 @@
             }
         }
 
-        // Init map immediately
+        async function uploadCsv() {
+            const fileInput = document.getElementById("csvFile");
+            const resultDiv = document.getElementById("uploadResult");
+
+            if (!fileInput.files.length) {
+                alert("Please select a CSV file first.");
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append("file", fileInput.files[0]);
+
+            resultDiv.textContent = "Uploading and processing...";
+
+            try {
+                const res = await fetch("/upload_csv", {
+                    method: "POST",
+                    body: formData
+                });
+                const result = await res.json();
+
+                if (result.error) {
+                    resultDiv.innerHTML = `<span style="color:red;">Error: ${result.error}</span>`;
+                    return;
+                }
+
+                const failedCount = result.failed ? result.failed.length : 0;
+                resultDiv.innerHTML = `
+                    Processed rows: ${result.processed}<br>
+                    Failed rows: ${failedCount}
+                `;
+
+                if (failedCount > 0) {
+                    console.log("Failed rows detail:", result.failed);
+                }
+
+                if (document.getElementById("oss-section").style.display !== "none") {
+                    loadEntries();
+                }
+            } catch (e) {
+                console.error(e);
+                resultDiv.innerHTML = `<span style="color:red;">Upload failed.</span>`;
+            }
+        }
+
         initMap();
     </script>
 </body>
