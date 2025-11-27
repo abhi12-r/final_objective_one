@@ -1,204 +1,118 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Sludge Emptying Time Calculator</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>
+    function toggleShapeFields() {
+        let shape = document.getElementById("shape").value;
+        document.getElementById("rectangular_fields").style.display =
+            (shape === "rectangular") ? "block" : "none";
+        document.getElementById("circular_fields").style.display =
+            (shape === "circular") ? "block" : "none";
+    }
 
-    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    // Initialize map (centered on India)
+    let map = L.map('map').setView([20.5937, 78.9629], 5);
 
-    <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        input, select { margin-bottom: 10px; padding: 5px; width: 300px; max-width: 100%; }
-        button { padding: 8px 16px; }
-        #result { margin-top: 20px; font-weight: bold; }
-        #map { height: 400px; margin-top: 30px; border: 1px solid #ccc; }
-        .legend {
-            background: white;
-            padding: 6px 8px;
-            font-size: 12px;
-            line-height: 18px;
-        }
-        .legend span {
-            display: inline-block;
-            width: 12px;
-            height: 12px;
-            margin-right: 4px;
-        }
-    </style>
-</head>
-<body>
-    <h2>Sludge Emptying Time Calculator</h2>
+    // Basemap tiles (Carto + OSM)
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+        maxZoom: 19,
+        attribution: '&copy; OpenStreetMap &copy; CARTO'
+    }).addTo(map);
 
-    <label>Last emptying date: </label>
-    <input type="date" id="last_date"><br>
+    // Layer group for markers (we will keep adding to this)
+    let markersLayer = L.layerGroup().addTo(map);
 
-    <label>No. of people using pit (P): </label>
-    <input type="number" id="P" step="0.01"><br>
+    function getColor(status) {
+        if (status === "healthy") return "green";
+        if (status === "warning") return "orange";
+        return "red";  // unhealthy or default
+    }
 
-    <label>q (sewage flow per person per day, L): </label>
-    <input type="number" id="q" step="0.01"><br>
+    function createCircleMarker(lat, lon, status, popupText) {
+        return L.circleMarker([lat, lon], {
+            radius: 8,
+            color: getColor(status),
+            fillColor: getColor(status),
+            fillOpacity: 0.8
+        }).bindPopup(popupText);
+    }
 
-    <label>F (digestion factor): </label>
-    <input type="number" id="F" step="0.01"><br>
-
-    <label>S (sludge accumulation rate, L/person/year): </label>
-    <input type="number" id="S" step="0.01"><br>
-
-    <label>Shape: </label>
-    <select id="shape" onchange="toggleShapeFields()">
-        <option value="rectangular">Rectangular</option>
-        <option value="circular">Circular</option>
-    </select><br>
-
-    <div id="rectangular_fields">
-        <label>Length (m): </label>
-        <input type="number" id="length" step="0.01"><br>
-        <label>Width (m): </label>
-        <input type="number" id="width" step="0.01"><br>
-        <label>Depth (m): </label>
-        <input type="number" id="depth" step="0.01"><br>
-    </div>
-
-    <div id="circular_fields" style="display:none;">
-        <label>Diameter (m): </label>
-        <input type="number" id="diameter" step="0.01"><br>
-        <label>Depth (m): </label>
-        <input type="number" id="circular_depth" step="0.01"><br>
-    </div>
-
-    <hr>
-
-    <h3>Location (for map)</h3>
-    <label>Latitude: </label>
-    <input type="number" id="lat" step="0.000001"><br>
-
-    <label>Longitude: </label>
-    <input type="number" id="lon" step="0.000001"><br>
-
-    <button onclick="calculate()">Solve</button>
-
-    <div id="result"></div>
-
-    <h3>Septic Tank Health Map</h3>
-    <div id="map"></div>
-
-    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-
-    <script>
-        function toggleShapeFields() {
-            let shape = document.getElementById("shape").value;
-            document.getElementById("rectangular_fields").style.display =
-                (shape === "rectangular") ? "block" : "none";
-            document.getElementById("circular_fields").style.display =
-                (shape === "circular") ? "block" : "none";
-        }
-
-        async function calculate() {
-            let shape = document.getElementById("shape").value;
-            let payload = {
-                last_date: document.getElementById("last_date").value,
-                P: document.getElementById("P").value,
-                q: document.getElementById("q").value,
-                F: document.getElementById("F").value,
-                S: document.getElementById("S").value,
-                shape: shape,
-                lat: document.getElementById("lat").value,
-                lon: document.getElementById("lon").value
-            };
-
-            if (shape === "rectangular") {
-                payload.length = document.getElementById("length").value;
-                payload.width = document.getElementById("width").value;
-                payload.depth = document.getElementById("depth").value;
-            } else {
-                payload.diameter = document.getElementById("diameter").value;
-                payload.depth = document.getElementById("circular_depth").value;
-            }
-
-            let response = await fetch("/calculate", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(payload)
-            });
-
-            let result = await response.json();
-            if (result.error) {
-                document.getElementById("result").innerHTML =
-                    `<span style="color:red;">Error: ${result.error}</span>`;
-            } else {
-                document.getElementById("result").innerHTML = `
-                    Volume of pit: ${result.volume_litres} L<br>
-                    Target volume (2/3 full): ${result.target_volume} L<br>
-                    A (Liquid retention): ${result.A} L<br>
-                    B (Sludge & scum storage): ${result.B} L<br>
-                    Check (A + B): ${result.check_sum} L<br>
-                    N (years until 2/3 full): ${result.N_years} years<br>
-                    Next emptying date: ${result.next_emptying_date}<br>
-                    Health status: <b>${result.status.toUpperCase()}</b>
-                `;
-
-                loadEntries();
-            }
-        }
-
-        let map = L.map('map').setView([20.5937, 78.9629], 5);
-
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            maxZoom: 19,
-            attribution: '&copy; OpenStreetMap contributors'
-        }).addTo(map);
-
-        let markersLayer = L.layerGroup().addTo(map);
-
-        function getColor(status) {
-            if (status === "healthy") return "green";
-            if (status === "warning") return "orange";
-            return "red";
-        }
-
-        function createCircleMarker(lat, lon, status, popupText) {
-            return L.circleMarker([lat, lon], {
-                radius: 8,
-                color: getColor(status),
-                fillColor: getColor(status),
-                fillOpacity: 0.8
-            }).bindPopup(popupText);
-        }
-
-        async function loadEntries() {
-            let res = await fetch("/api/entries");
-            let data = await res.json();
-
-            markersLayer.clearLayers();
-
-            data.forEach(function (entry) {
-                if (entry.lat && entry.lon) {
-                    let popup = `
-                        Status: <b>${entry.status.toUpperCase()}</b><br>
-                        Next emptying: ${entry.next_emptying_date}<br>
-                        N (years): ${entry.N_years}<br>
-                        P: ${entry.P}
-                    `;
-                    let marker = createCircleMarker(entry.lat, entry.lon, entry.status, popup);
-                    markersLayer.addLayer(marker);
-                }
-            });
-        }
-
-        const legend = L.control({position: 'bottomright'});
-        legend.onAdd = function () {
-            const div = L.DomUtil.create('div', 'legend');
-            div.innerHTML = `
-                <b>Legend</b><br>
-                <span style="background:green;"></span> Healthy<br>
-                <span style="background:orange;"></span> Warning<br>
-                <span style="background:red;"></span> Unhealthy
-            `;
-            return div;
+    async function calculate() {
+        let shape = document.getElementById("shape").value;
+        let payload = {
+            last_date: document.getElementById("last_date").value,
+            P: document.getElementById("P").value,
+            q: document.getElementById("q").value,
+            F: document.getElementById("F").value,
+            S: document.getElementById("S").value,
+            shape: shape,
+            lat: document.getElementById("lat").value,
+            lon: document.getElementById("lon").value
         };
-        legend.addTo(map);
 
-        loadEntries();
-    </script>
-</body>
-</html>
+        if (shape === "rectangular") {
+            payload.length = document.getElementById("length").value;
+            payload.width = document.getElementById("width").value;
+            payload.depth = document.getElementById("depth").value;
+        } else {
+            payload.diameter = document.getElementById("diameter").value;
+            payload.depth = document.getElementById("circular_depth").value;
+        }
+
+        let response = await fetch("/calculate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+
+        let result = await response.json();
+        if (result.error) {
+            document.getElementById("result").innerHTML =
+                `<span style="color:red;">Error: ${result.error}</span>`;
+            return;
+        }
+
+        // Show numeric results
+        document.getElementById("result").innerHTML = `
+            Volume of pit: ${result.volume_litres} L<br>
+            Target volume (2/3 full): ${result.target_volume} L<br>
+            A (Liquid retention): ${result.A} L<br>
+            B (Sludge & scum storage): ${result.B} L<br>
+            Check (A + B): ${result.check_sum} L<br>
+            N (years until 2/3 full): ${result.N_years} years<br>
+            Next emptying date: ${result.next_emptying_date}<br>
+            Health status: <b>${result.status.toUpperCase()}</b>
+        `;
+
+        // ---- Add marker for this entry (without deleting old markers) ----
+        const latStr = document.getElementById("lat").value;
+        const lonStr = document.getElementById("lon").value;
+        const lat = parseFloat(latStr);
+        const lon = parseFloat(lonStr);
+
+        if (!isNaN(lat) && !isNaN(lon)) {
+            let popup = `
+                Status: <b>${result.status.toUpperCase()}</b><br>
+                Next emptying: ${result.next_emptying_date}<br>
+                N (years): ${result.N_years}<br>
+                P: ${payload.P}
+            `;
+            let marker = createCircleMarker(lat, lon, result.status, popup);
+            markersLayer.addLayer(marker);
+
+            // Zoom to the newly added point
+            map.setView([lat, lon], 15);
+        }
+    }
+
+    // Legend
+    const legend = L.control({position: 'bottomright'});
+    legend.onAdd = function () {
+        const div = L.DomUtil.create('div', 'legend');
+        div.innerHTML = `
+            <b>Legend</b><br>
+            <span style="background:green;"></span> Healthy<br>
+            <span style="background:orange;"></span> Warning<br>
+            <span style="background:red;"></span> Unhealthy
+        `;
+        return div;
+    };
+    legend.addTo(map);
+</script>
