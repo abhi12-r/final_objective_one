@@ -24,12 +24,10 @@ def parse_last_date(value: str) -> datetime:
     if not s:
         raise ValueError("last_date is empty")
 
-    # Case: only year given
     if len(s) == 4 and s.isdigit():
         year = int(s)
         return datetime(year, 1, 1)
 
-    # Try several common formats
     for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d"):
         try:
             return datetime.strptime(s, fmt)
@@ -53,13 +51,11 @@ def compute_and_store_entry(data, name=None):
     F = float(data.get('F'))
     S = float(data.get('S'))
 
-    # Lat/Long
     lat_raw = data.get('lat')
     lon_raw = data.get('lon')
     lat = float(lat_raw) if lat_raw not in (None, "",) else None
     lon = float(lon_raw) if lon_raw not in (None, "",) else None
 
-    # Shape Calculations
     if shape == "rectangular":
         length = float(data.get('length'))
         width = float(data.get('width'))
@@ -75,18 +71,15 @@ def compute_and_store_entry(data, name=None):
 
     volume_litres = volume_m3 * 1000
 
-    # WHO formula
     A = P * q
     target_volume = (2 / 3) * volume_litres
     N = (target_volume - A) / (P * F * S)
     B = P * N * F * S
     check_sum = A + B
 
-    # Next emptying date (robust date parsing)
     last_date_obj = parse_last_date(last_emptying_date)
     next_emptying_date = last_date_obj + timedelta(days=N * 365)
 
-    # Status category
     today = datetime.today().date()
     next_date_only = next_emptying_date.date()
 
@@ -97,7 +90,6 @@ def compute_and_store_entry(data, name=None):
     else:
         status = "healthy"
 
-    # Save this entry for map
     if lat is not None and lon is not None:
         entries.append({
             "name": name,
@@ -127,6 +119,12 @@ def index():
     return render_template('index.html')
 
 
+@app.route('/map')
+def map_view():
+    """Separate page that just shows the map + density."""
+    return render_template('map.html')
+
+
 @app.route('/calculate', methods=['POST'])
 def calculate():
     data = request.json
@@ -146,7 +144,7 @@ def get_entries():
 @app.route('/upload_csv', methods=['POST'])
 def upload_csv():
     """
-    Accepts a CSV file with header:
+    CSV header:
     name,last_date,shape,P,q,F,S,length,width,depth,diameter,lat,lon
 
     last_date can be:
@@ -168,7 +166,7 @@ def upload_csv():
         processed = 0
         failed_rows = []
 
-        for i, row in enumerate(reader, start=2):  # line numbers (header is 1)
+        for i, row in enumerate(reader, start=2):
             try:
                 shape = (row.get('shape') or "").strip().lower()
 
